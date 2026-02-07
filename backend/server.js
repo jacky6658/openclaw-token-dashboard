@@ -133,8 +133,48 @@ async function collectUsageData() {
       db.close();
     }
     
+    // 收集 Rate Limit 資訊
+    await collectRateLimitData();
+    
   } catch (error) {
     console.error('收集數據失敗:', error.message);
+  }
+}
+
+// Rate Limit 數據收集器
+async function collectRateLimitData() {
+  try {
+    const { stdout } = await execAsync('openclaw models 2>/dev/null || echo ""');
+    const lines = stdout.split('\n');
+    
+    const db = getDb();
+    const timestamp = new Date().toISOString();
+    let collected = 0;
+    
+    lines.forEach(line => {
+      // 解析 cooldown：「google:default=... [cooldown 46m]」
+      const cooldownMatch = line.match(/([\w-]+):[\w.-]+=.+\[cooldown\s+(\d+)([mh])\]/);
+      if (cooldownMatch) {
+        const [, provider, time, unit] = cooldownMatch;
+        const cooldownMinutes = unit === 'h' ? parseInt(time) * 60 : parseInt(time);
+        const cooldownUntil = new Date(Date.now() + cooldownMinutes * 60 * 1000).toISOString();
+        
+        db.run(`
+          INSERT INTO rate_limits (provider, cooldown_until, timestamp)
+          VALUES (?, ?, ?)
+        `, [provider, cooldownUntil, timestamp], (err) => {
+          if (!err) collected++;
+        });
+      }
+    });
+    
+    if (collected > 0) {
+      console.log(`✅ Rate Limit 數據已收集：${collected} 筆`);
+    }
+    
+    db.close();
+  } catch (error) {
+    console.error('收集 Rate Limit 失敗:', error.message);
   }
 }
 
