@@ -751,29 +751,28 @@ async function renderModelAnalytics() {
     
     let html = '<div class="model-analytics">';
     
-    // 統計卡片
+    // 統計卡片（使用現有的 stats-grid）
     html += `
-      <div class="stats-cards">
+      <div class="stats-grid">
         <div class="stat-card">
-          <div class="stat-icon">📊</div>
-          <div class="stat-content">
-            <small>總 Token 用量</small>
-            <strong>${formatNumber(data.total_tokens)}</strong>
-          </div>
+          <h3>總 Token 用量</h3>
+          <div class="value">${formatNumber(data.total_tokens)}</div>
+          <div class="label">tokens</div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon">🎯</div>
-          <div class="stat-content">
-            <small>模型數量</small>
-            <strong>${data.models.length}</strong>
-          </div>
+          <h3>模型數量</h3>
+          <div class="value">${data.models.length}</div>
+          <div class="label">個</div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon">🔥</div>
-          <div class="stat-content">
-            <small>最常用模型</small>
-            <strong>${data.models[0]?.model || 'N/A'}</strong>
-          </div>
+          <h3>最常用模型</h3>
+          <div class="value" style="font-size: 1rem;">${data.models[0]?.model.split('/')[1] || 'N/A'}</div>
+          <div class="label">${((data.models[0]?.percentage) || 0)}%</div>
+        </div>
+        <div class="stat-card">
+          <h3>總請求數</h3>
+          <div class="value">${data.models.reduce((sum, m) => sum + (m.requests || 0), 0)}</div>
+          <div class="label">次</div>
         </div>
       </div>
     `;
