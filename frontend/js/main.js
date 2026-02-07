@@ -486,10 +486,28 @@ async function openModelSwitcher() {
     
     const currentModel = config.current_model;
     
+    // 將 providers 物件展平成陣列
+    const allModels = [];
+    Object.entries(modelsData.providers || {}).forEach(([provider, items]) => {
+      if (Array.isArray(items)) {
+        items.forEach(item => {
+          allModels.push({
+            provider,
+            full_name: item.full_name || `${provider}/${item.profile}`,
+            model: item.profile || item.model || 'unknown',
+            quota: item.quota || 0,
+            quota_left: item.quota || 0,
+            status: item.status || 'unknown',
+            cooldown_seconds: item.status === 'cooldown' ? 300 : 0
+          });
+        });
+      }
+    });
+    
     // 生成模型卡片
     let html = '<div class="model-grid">';
     
-    for (const model of modelsData.models) {
+    for (const model of allModels) {
       const isCurrent = model.full_name === currentModel;
       const isCooldown = model.cooldown_seconds > 0;
       const quotaLeft = model.quota_left || 0;
@@ -542,7 +560,7 @@ async function openModelSwitcher() {
     html += '</div>';
     
     // 智能推薦
-    const recommended = modelsData.models.find(m => m.quota_left > 70 && m.cooldown_seconds === 0 && m.full_name !== currentModel);
+    const recommended = allModels.find(m => m.quota_left > 70 && m.cooldown_seconds === 0 && m.full_name !== currentModel);
     if (recommended) {
       html += `
         <div class="recommendation">
