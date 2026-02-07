@@ -20,6 +20,34 @@ const PORT = process.env.PORT || 3737;
 const DB_PATH = path.join(__dirname, 'db/openclaw-tokens.db');
 const OPENCLAW_CONFIG_PATH = path.join(require('os').homedir(), '.openclaw/openclaw.json');
 
+// 快取機制
+let openclawCache = {
+  data: null,
+  timestamp: null,
+  ttl: 30000 // 30 秒快取
+};
+
+// 更新快取
+async function updateOpenclawCache() {
+  try {
+    const data = await parseOpenclawModels();
+    openclawCache.data = data;
+    openclawCache.timestamp = Date.now();
+    console.log('✅ OpenClaw 快取已更新');
+  } catch (error) {
+    console.error('更新快取失敗:', error.message);
+  }
+}
+
+// 獲取快取數據（過期則更新）
+async function getOpenclawData() {
+  const now = Date.now();
+  if (!openclawCache.data || (now - openclawCache.timestamp) > openclawCache.ttl) {
+    await updateOpenclawCache();
+  }
+  return openclawCache.data || { defaultModel: 'unknown', models: {} };
+}
+
 // 中間件
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../frontend')));
@@ -157,14 +185,15 @@ app.get('/api/overview', (req, res) => {
   db.close();
 });
 
-// API: 模型配額狀態（從 openclaw models 命令讀取）
+// API: 模型配額狀態（從快取讀取）
 app.get('/api/models', async (req, res) => {
   try {
-    const openclawData = await parseOpenclawModels();
+    const openclawData = await getOpenclawData();
     
     res.json({
       current_model: openclawData.defaultModel,
       providers: openclawData.models,
+      cache_age: openclawCache.timestamp ? Date.now() - openclawCache.timestamp : null,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -311,8 +340,8 @@ app.get('/api/cost', (req, res) => {
 // API: 獲取當前配置（優化版 - 避免卡住）
 app.get('/api/config', async (req, res) => {
   try {
-    // 執行 openclaw models 獲取當前模型
-    const openclawData = await parseOpenclawModels();
+    // 從快取獲取數據
+    const openclawData = await getOpenclawData();
     
     // 檢查 Gateway 狀態
     let gatewayRunning = false;
@@ -337,6 +366,7 @@ app.get('/api/config', async (req, res) => {
       gateway_running: gatewayRunning,
       providers: Object.keys(openclawData.models),
       warnings: warnings,
+      cache_age: openclawCache.timestamp ? Date.now() - openclawCache.timestamp : null,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -391,79 +421,19 @@ app.post('/api/switch-model', async (req, res) => {
   }
 });
 
-// API: 配額詳情（實時執行 openclaw models）
+// API: 配額詳情（從快取讀取）
 app.get('/api/quota-status', async (req, res) => {
   try {
-    const { stdout } = await execAsync('openclaw models --json 2>/dev/null || openclaw models');
-    
-    // 嘗試解析 JSON 輸出（如果支持）
-    let providers = {};
-    
-    try {
-      const jsonData = JSON.parse(stdout);
-      
-      // 提取 OAuth/token status 部分
-      if (jsonData['oauth_token_status']) {
-        Object.entries(jsonData['oauth_token_status']).forEach(([providerKey, profiles]) => {
-          profiles.forEach(profile => {
-            if (!providers[providerKey]) {
-              providers[providerKey] = [];
-            }
-            
-            providers[providerKey].push({
-              profile: profile.profile || profile.name,
-              status: profile.status === 'ok' ? 'ok' : 'expired',
-              full_name: `${providerKey}/${profile.profile}`
-            });
-          });
-        });
-      }
-    } catch (e) {
-      // Fallback: 手動解析文本輸出
-      const lines = stdout.split('\n');
-      
-      // 查找 "OAuth/token status" 部分
-      let inOAuthSection = false;
-      let currentProvider = null;
-      
-      lines.forEach(line => {
-        if (line.includes('OAuth/token status')) {
-          inOAuthSection = true;
-          return;
-        }
-        
-        if (!inOAuthSection) return;
-        
-        // 匹配 Provider 行：「- provider」
-        if (line.match(/^- ([\w-]+)$/)) {
-          currentProvider = line.match(/^- ([\w-]+)$/)[1];
-          if (!providers[currentProvider]) {
-            providers[currentProvider] = [];
-          }
-          return;
-        }
-        
-        // 匹配內容行：「  - profile_name ... status」
-        const profileMatch = line.match(/^\s+-\s+([\w:.-]+)\s+(.+)$/);
-        if (profileMatch && currentProvider) {
-          const [, profileName, details] = profileMatch;
-          providers[currentProvider].push({
-            profile: profileName,
-            status: details.includes('ok') ? 'ok' : 'expired',
-            details: details,
-            full_name: `${currentProvider}/${profileName}`
-          });
-        }
-      });
-    }
+    const openclawData = await getOpenclawData();
     
     res.json({
-      providers,
-      timestamp: new Date().toISOString(),
-      raw_output: stdout.substring(0, 2000) // 限制輸出大小
+      providers: openclawData.models,
+      current_model: openclawData.defaultModel,
+      cache_age: openclawCache.timestamp ? Date.now() - openclawCache.timestamp : null,
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error('執行 openclaw models 失敗:', error);
+    console.error('獲取配額狀態失敗:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -473,16 +443,31 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// 初始化快取
+async function initializeCache() {
+  console.log('⏳ 初始化 OpenClaw 快取...');
+  await updateOpenclawCache();
+  
+  // 每 30 秒定時更新一次
+  setInterval(updateOpenclawCache, openclawCache.ttl);
+  console.log(`✅ 已設置快取自動更新（每 ${openclawCache.ttl / 1000} 秒）`);
+}
+
 // 啟動伺服器
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Token Dashboard running at http://localhost:${PORT}`);
   console.log(`📊 API endpoints:`);
-  console.log(`   - GET /api/overview?period=today|week|month`);
+  console.log(`   - GET /api/config`);
   console.log(`   - GET /api/models`);
+  console.log(`   - GET /api/quota-status`);
+  console.log(`   - GET /api/overview?period=today|week|month`);
   console.log(`   - GET /api/rate-limits`);
   console.log(`   - GET /api/history?days=7`);
   console.log(`   - GET /api/cost?period=today|week|month`);
   console.log(`   - GET /api/health`);
+  
+  // 初始化快取
+  await initializeCache();
 });
 
 module.exports = app;
