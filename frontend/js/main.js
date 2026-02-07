@@ -2,6 +2,7 @@
 
 const API_BASE = '/api';
 let currentPage = 'overview';
+let currentFilter = 'all'; // 保存總覽頁面的 filter 狀態
 let countdownValue = 1.0;
 let countdownInterval;
 
@@ -57,7 +58,7 @@ async function loadPage(page, showLoading = true) {
   try {
     switch (page) {
       case 'overview':
-        await renderOverview();
+        await renderOverview(currentFilter);
         break;
       case 'quota':
         await renderQuota();
@@ -85,6 +86,9 @@ async function loadPage(page, showLoading = true) {
 
 // 渲染總覽頁
 async function renderOverview(filter = 'all') {
+  // 保存 filter 狀態
+  currentFilter = filter;
+  
   // 並行獲取：即時統計 + DB 統計
   const [live, today, week, month] = await Promise.all([
     fetch(`${API_BASE}/live-stats?filter=${filter}`).then(r => r.json()),
