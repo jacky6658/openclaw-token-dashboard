@@ -633,6 +633,67 @@ app.get('/api/quota-status', async (req, res) => {
   }
 });
 
+// API: 模型用量分析
+app.get('/api/model-analytics', (req, res) => {
+  const db = getDb();
+  const { period = 'today' } = req.query;
+  
+  let timeFilter = '';
+  switch (period) {
+    case 'today':
+      timeFilter = "AND date(timestamp) = date('now')";
+      break;
+    case 'week':
+      timeFilter = "AND timestamp >= datetime('now', '-7 days')";
+      break;
+    case 'month':
+      timeFilter = "AND timestamp >= datetime('now', '-30 days')";
+      break;
+  }
+  
+  db.all(`
+    SELECT 
+      provider || '/' || model as full_model,
+      provider,
+      model,
+      SUM(input_tokens) as total_in,
+      SUM(output_tokens) as total_out,
+      SUM(input_tokens + output_tokens) as total_tokens,
+      COUNT(*) as request_count
+    FROM token_usage
+    WHERE 1=1 ${timeFilter}
+    GROUP BY provider, model
+    ORDER BY total_tokens DESC
+  `, (err, rows) => {
+    if (err) {
+      console.error('查詢模型分析失敗:', err);
+      res.status(500).json({ error: err.message });
+      db.close();
+      return;
+    }
+    
+    const totalTokens = rows.reduce((sum, r) => sum + r.total_tokens, 0);
+    
+    const analytics = rows.map(row => ({
+      model: row.full_model,
+      provider: row.provider,
+      tokens_in: row.total_in,
+      tokens_out: row.total_out,
+      total_tokens: row.total_tokens,
+      percentage: totalTokens > 0 ? ((row.total_tokens / totalTokens) * 100).toFixed(2) : 0,
+      requests: row.request_count
+    }));
+    
+    res.json({
+      period,
+      total_tokens: totalTokens,
+      models: analytics
+    });
+    
+    db.close();
+  });
+});
+
 // 健康檢查
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

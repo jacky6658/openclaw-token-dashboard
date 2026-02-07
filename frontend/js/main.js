@@ -65,6 +65,9 @@ async function loadPage(page, showLoading = true) {
       case 'models':
         await renderModels();
         break;
+      case 'model-analytics':
+        await renderModelAnalytics();
+        break;
       case 'rate-limits':
         await renderRateLimits();
         break;
@@ -678,4 +681,102 @@ async function renderQuota() {
   
   html += '</div>';
   content.innerHTML = html;
+}
+
+async function renderModelAnalytics() {
+  const content = document.getElementById('content');
+  content.innerHTML = '<div class="loading">載入模型分析...</div>';
+  
+  try {
+    const period = 'today'; // 可以後續改為可選
+    const data = await fetch(`${API_BASE}/model-analytics?period=${period}`).then(r => r.json());
+    
+    if (!data.models || data.models.length === 0) {
+      content.innerHTML = '<div class="error">暫無數據</div>';
+      return;
+    }
+    
+    let html = '<div class="model-analytics">';
+    
+    // 統計卡片
+    html += `
+      <div class="stats-cards">
+        <div class="stat-card">
+          <div class="stat-icon">📊</div>
+          <div class="stat-content">
+            <small>總 Token 用量</small>
+            <strong>${formatNumber(data.total_tokens)}</strong>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">🎯</div>
+          <div class="stat-content">
+            <small>模型數量</small>
+            <strong>${data.models.length}</strong>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">🔥</div>
+          <div class="stat-content">
+            <small>最常用模型</small>
+            <strong>${data.models[0]?.model || 'N/A'}</strong>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // 模型用量表格
+    html += `
+      <div class="model-usage-table">
+        <h3>模型用量詳情</h3>
+        <table class="usage-table">
+          <thead>
+            <tr>
+              <th>模型</th>
+              <th>Provider</th>
+              <th>Input Tokens</th>
+              <th>Output Tokens</th>
+              <th>總計</th>
+              <th>占比</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+    
+    data.models.forEach(m => {
+      html += `
+        <tr>
+          <td><code>${m.model}</code></td>
+          <td>${m.provider}</td>
+          <td>${formatNumber(m.tokens_in)}</td>
+          <td>${formatNumber(m.tokens_out)}</td>
+          <td><strong>${formatNumber(m.total_tokens)}</strong></td>
+          <td>
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: ${m.percentage}%; background: linear-gradient(90deg, #00ff88, #00d4ff);"></div>
+            </div>
+            <span style="margin-left: 10px;">${m.percentage}%</span>
+          </td>
+        </tr>
+      `;
+    });
+    
+    html += `
+          </tbody>
+        </table>
+      </div>
+    `;
+    
+    html += '</div>';
+    content.innerHTML = html;
+    
+    lucide.createIcons();
+  } catch (error) {
+    console.error('載入模型分析失敗:', error);
+    content.innerHTML = '<div class="error">載入失敗</div>';
+  }
+}
+
+function formatNumber(num) {
+  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
