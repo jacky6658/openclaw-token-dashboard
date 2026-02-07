@@ -710,36 +710,37 @@ app.post('/api/switch-model', async (req, res) => {
     fs.writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8');
     console.log(`✅ 模型已切換：${oldModel} → ${model}`);
     
-    // 不重啟 Gateway（讓 OpenClaw 自動偵測配置變更）
-    // 直接清除快取並重新載入
+    // 重啟 Gateway 讓配置生效
+    console.log('🔄 正在重啟 Gateway...');
+    try {
+      await execAsync('openclaw gateway restart 2>&1');
+      console.log('✅ Gateway 重啟成功');
+      
+      // 等待 Gateway 完全啟動
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    } catch (e) {
+      console.warn('⚠️ Gateway 重啟警告:', e.message);
+    }
+    
+    // 清除快取並重新載入
     openclawCache.timestamp = 0;
     liveStatsCache.timestamp = 0;
     await updateOpenclawCache();
     
-    console.log('✅ 配置已即時生效（無需重啟）');
+    console.log('✅ 配置已生效');
     
-    // 發送 Telegram 通知給用戶
-    try {
-      const notificationMsg = `✅ 模型已切換\n\n舊模型：\`${oldModel}\`\n新模型：\`${model}\`\n\n下一條對話將使用新模型。`;
-      
-      // 使用 spawn 而不是 exec，避免 shell 轉義問題
-      const { spawn } = require('child_process');
-      const proc = spawn('openclaw', ['message', 'send', '--channel', 'telegram', '--to', '8365775688', '--message', notificationMsg]);
-      
-      proc.on('close', (code) => {
-        if (code === 0) {
-          console.log('✅ 已發送 Telegram 通知');
-        } else {
-          console.warn(`發送通知失敗，退出碼：${code}`);
-        }
-      });
-      
-      proc.stderr.on('data', (data) => {
-        console.warn('發送通知錯誤:', data.toString());
-      });
-    } catch (e) {
-      console.warn('發送通知失敗（不影響切換）:', e.message);
-    }
+    // 發送 Telegram 通知給用戶（在 Gateway 重啟後）
+    setTimeout(async () => {
+      try {
+        const notificationMsg = `✅ 模型已切換\n\n舊模型: ${oldModel}\n新模型: ${model}\n\n下一條對話將使用新模型。`;
+        
+        // 簡單的命令，避免轉義問題
+        await execAsync(`openclaw message send --channel telegram --to 8365775688 --message "${notificationMsg}" 2>&1`);
+        console.log('✅ 已發送 Telegram 通知');
+      } catch (e) {
+        console.warn('發送通知失敗（不影響切換）:', e.message);
+      }
+    }, 3000); // 等待 3 秒確保 Gateway 已重啟
     
     res.json({ 
       success: true, 
