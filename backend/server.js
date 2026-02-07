@@ -106,8 +106,27 @@ async function collectUsageData() {
     const modelCount = Object.keys(modelUsage).length;
     
     for (const [modelName, stats] of Object.entries(modelUsage)) {
-      const [provider, ...modelParts] = modelName.split('/');
-      const model = modelParts.join('/') || modelName;
+      // 解析模型名稱（可能帶或不帶 provider prefix）
+      let provider, model;
+      
+      if (modelName.includes('/')) {
+        // 格式：anthropic/claude-haiku-4-5
+        [provider, ...modelParts] = modelName.split('/');
+        model = modelParts.join('/');
+      } else {
+        // 格式：claude-sonnet-4-5 (無 provider)
+        // 從模型名稱推斷 provider
+        if (modelName.startsWith('claude') || modelName.startsWith('opus') || modelName.startsWith('sonnet') || modelName.startsWith('haiku')) {
+          provider = 'anthropic';
+        } else if (modelName.startsWith('gemini') || modelName.startsWith('flash') || modelName.startsWith('pro')) {
+          provider = 'google';
+        } else if (modelName.startsWith('gpt') || modelName.startsWith('o1')) {
+          provider = 'openai';
+        } else {
+          provider = 'unknown';
+        }
+        model = modelName;
+      }
       
       // 簡單估算：假設 input:output = 1:2
       const inputTokens = Math.floor(stats.tokens / 3);
