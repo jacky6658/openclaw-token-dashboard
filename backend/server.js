@@ -718,6 +718,15 @@ app.post('/api/switch-model', async (req, res) => {
     
     console.log('✅ 配置已即時生效（無需重啟）');
     
+    // 發送 Telegram 通知給用戶
+    try {
+      const notificationMsg = `✅ 模型已切換\n\n舊模型：${oldModel}\n新模型：${model}\n\n下一條對話將使用新模型。`;
+      await execAsync(`openclaw message send --to telegram:8365775688 --text "${notificationMsg.replace(/"/g, '\\"')}" 2>&1`);
+      console.log('✅ 已發送 Telegram 通知');
+    } catch (e) {
+      console.warn('發送通知失敗（不影響切換）:', e.message);
+    }
+    
     res.json({ 
       success: true, 
       message: `已切換到 ${model}`,
