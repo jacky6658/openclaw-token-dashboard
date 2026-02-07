@@ -653,11 +653,15 @@ async function renderQuota() {
     
     models.forEach(m => {
       const statusEmoji = m.status === 'ok' ? '✅' : '⏳';
+      const modelName = m.full_name || m.profile || m.model || 'unknown';
+      const quota = m.quota ? `${m.quota}%` : '未知';
+      const statusText = m.status === 'ok' ? '可用' : m.status === 'expired' ? '已過期' : 'Cooldown';
+      
       html += `
         <tr>
-          <td><code>${m.model}</code></td>
-          <td><strong>${m.quota}%</strong></td>
-          <td>${statusEmoji} ${m.status === 'ok' ? '可用' : 'Cooldown'}</td>
+          <td><code>${modelName}</code></td>
+          <td><strong>${quota}</strong></td>
+          <td>${statusEmoji} ${statusText}</td>
         </tr>
       `;
     });

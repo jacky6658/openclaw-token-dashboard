@@ -66,20 +66,36 @@ async function parseOpenclawModels() {
         return;
       }
       
-      // 模型行帶配額：「usage: Pro 100% left」
-      if (currentProvider && line.includes('usage:')) {
-        const quotaMatch = line.match(/(\d+)%/);
-        const quota = quotaMatch ? parseInt(quotaMatch[1]) : 100;
-        models[currentProvider].push({ quota, status: 'ok' });
+      // 配額行：「- google-gemini-cli usage: Pro 100% left · Flash 100% left」
+      if (line.match(/usage:/) && currentProvider) {
+        const parts = line.split('·');
+        parts.forEach(part => {
+          const quotaMatch = part.match(/(\w+)\s+(\d+)%/);
+          if (quotaMatch) {
+            const [, modelName, quota] = quotaMatch;
+            if (!models[currentProvider]) {
+              models[currentProvider] = [];
+            }
+            models[currentProvider].push({
+              profile: `${currentProvider}:${modelName}`,
+              quota: parseInt(quota),
+              status: 'ok',
+              full_name: `${currentProvider}/${modelName}`
+            });
+          }
+        });
       }
       
       // 帳戶行：「  - profile_name ... ok expires in 55m」
-      if (currentProvider && line.match(/^\s+-\s+[\w:.-]+/)) {
-        const statusMatch = line.match(/ok|expired/);
-        if (statusMatch) {
-          models[currentProvider].push({ 
-            status: statusMatch[0],
-            details: line.trim()
+      if (currentProvider && line.match(/^\s+-\s+([\w:.-]+)/)) {
+        const profileMatch = line.match(/^\s+-\s+([\w:.-]+)\s+\((.*?)\)\s+(ok|expired)/);
+        if (profileMatch) {
+          const [, profile, email, status] = profileMatch;
+          models[currentProvider].push({
+            profile,
+            email,
+            status,
+            full_name: `${currentProvider}/${profile}`
           });
         }
       }
