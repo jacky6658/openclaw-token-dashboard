@@ -84,10 +84,10 @@ async function loadPage(page, showLoading = true) {
 }
 
 // 渲染總覽頁
-async function renderOverview() {
+async function renderOverview(filter = 'all') {
   // 並行獲取：即時統計 + DB 統計
   const [live, today, week, month] = await Promise.all([
-    fetch(`${API_BASE}/live-stats`).then(r => r.json()),
+    fetch(`${API_BASE}/live-stats?filter=${filter}`).then(r => r.json()),
     fetch(`${API_BASE}/overview?period=today`).then(r => r.json()),
     fetch(`${API_BASE}/overview?period=week`).then(r => r.json()),
     fetch(`${API_BASE}/overview?period=month`).then(r => r.json())
@@ -99,10 +99,20 @@ async function renderOverview() {
   const todayTokens = live.total_tokens || today.total_tokens;
   const estimatedCost = (todayTokens / 1000000 * 3).toFixed(2); // 粗估
   
-  content.innerHTML = `
+  // 過濾選項
+  const filterBtns = `
+    <div style="margin-bottom: 20px; display: flex; gap: 10px;">
+      <button class="btn-select ${filter === 'all' ? 'active' : ''}" onclick="renderOverview('all')" style="padding: 8px 16px; ${filter === 'all' ? 'background: #00ff88; color: #000;' : ''}">全部</button>
+      <button class="btn-select ${filter === 'dm' ? 'active' : ''}" onclick="renderOverview('dm')" style="padding: 8px 16px; ${filter === 'dm' ? 'background: #00ff88; color: #000;' : ''}">僅私聊</button>
+      <button class="btn-select ${filter === 'group' ? 'active' : ''}" onclick="renderOverview('group')" style="padding: 8px 16px; ${filter === 'group' ? 'background: #00ff88; color: #000;' : ''}">僅群組</button>
+      <span style="margin-left: auto; color: #888; align-self: center;">📊 ${live.period || '過去 24 小時'}</span>
+    </div>
+  `;
+  
+  content.innerHTML = filterBtns + `
     <div class="stats-grid">
       <div class="stat-card">
-        <h3>今日消耗 <span style="color: #00ff88; font-size: 0.7rem;">●即時</span></h3>
+        <h3>${filter === 'all' ? '總消耗' : filter === 'dm' ? '私聊消耗' : '群組消耗'} <span style="color: #00ff88; font-size: 0.7rem;">●即時</span></h3>
         <div class="value">${formatNumber(todayTokens)}</div>
         <div class="label">tokens (~$${estimatedCost})</div>
       </div>
@@ -142,6 +152,26 @@ async function renderOverview() {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+    
+    <div class="section">
+      <h2><i data-lucide="message-circle" style="width: 24px; height: 24px; stroke: currentColor; vertical-align: middle; margin-right: 8px;"></i>Session 類型分佈</h2>
+      <div class="chart-container" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+        ${['dm', 'group', 'other'].map(type => {
+          const tokens = live.by_type?.[type] || 0;
+          const percentage = todayTokens > 0 ? ((tokens / todayTokens) * 100).toFixed(1) : 0;
+          const label = type === 'dm' ? '私聊' : type === 'group' ? '群組' : '其他';
+          const icon = type === 'dm' ? '💬' : type === 'group' ? '👥' : '📝';
+          return `
+            <div class="stat-card" style="text-align: center;">
+              <div style="font-size: 2rem; margin-bottom: 10px;">${icon}</div>
+              <strong>${label}</strong>
+              <div style="font-size: 1.2rem; margin: 10px 0;">${formatNumber(tokens)}</div>
+              <div style="color: #888; font-size: 0.9rem;">${percentage}%</div>
+            </div>
+          `;
+        }).join('')}
       </div>
     </div>
     

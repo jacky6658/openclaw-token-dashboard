@@ -55,51 +55,83 @@ async function getOpenclawData() {
   return openclawCache.data || { defaultModel: 'unknown', models: {} };
 }
 
-// 獲取即時統計（帶快取）
-async function getLiveStats() {
+// 獲取即時統計（帶快取，支援過濾）
+async function getLiveStats(filter = 'all') {
   const now = Date.now();
+  const cacheKey = `${filter}_${liveStatsCache.timestamp}`;
   
-  // 檢查快取
-  if (liveStatsCache.data && (now - liveStatsCache.timestamp) < liveStatsCache.ttl) {
-    return liveStatsCache.data;
+  // 檢查快取（不同 filter 獨立快取）
+  if (liveStatsCache[cacheKey] && (now - liveStatsCache.timestamp) < liveStatsCache.ttl) {
+    return liveStatsCache[cacheKey];
   }
   
   try {
     const sessionsPath = path.join(require('os').homedir(), '.openclaw/agents/main/sessions/sessions.json');
     
     if (!fs.existsSync(sessionsPath)) {
-      return { total_tokens: 0, models: {} };
+      return { total_tokens: 0, models: {}, by_type: {} };
     }
     
     const sessionsData = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
-    const sessions = Object.values(sessionsData);
+    const sessions = Object.entries(sessionsData);
     
-    // 統計今日用量（過去 24 小時）
+    // 統計過去 24 小時用量
     const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
     let totalTokens = 0;
     const modelUsage = {};
+    const byType = { dm: 0, group: 0, other: 0 };
+    const byTypeModels = { dm: {}, group: {}, other: {} };
     
-    sessions.forEach(session => {
+    sessions.forEach(([key, session]) => {
       if (!session.updatedAt || session.updatedAt < oneDayAgo) return;
       if (!session.totalTokens || session.totalTokens === 0) return;
       
+      // 判斷 session 類型
+      let sessionType = 'other';
+      if (key.includes(':dm:')) {
+        sessionType = 'dm';
+      } else if (key.includes(':group:')) {
+        sessionType = 'group';
+      }
+      
+      // 過濾（如果指定）
+      if (filter === 'dm' && sessionType !== 'dm') return;
+      if (filter === 'group' && sessionType !== 'group') return;
+      
       totalTokens += session.totalTokens;
+      byType[sessionType] += session.totalTokens;
       
       const model = session.model || 'unknown';
       if (!modelUsage[model]) {
         modelUsage[model] = 0;
       }
       modelUsage[model] += session.totalTokens;
+      
+      // 按類型分組模型用量
+      if (!byTypeModels[sessionType][model]) {
+        byTypeModels[sessionType][model] = 0;
+      }
+      byTypeModels[sessionType][model] += session.totalTokens;
     });
     
+    const result = {
+      total_tokens: totalTokens,
+      models: modelUsage,
+      by_type: byType,
+      by_type_models: byTypeModels,
+      sessions_count: sessions.length,
+      filter,
+      period: '過去 24 小時'
+    };
+    
     // 更新快取
-    liveStatsCache.data = { total_tokens: totalTokens, models: modelUsage, sessions_count: sessions.length };
+    liveStatsCache[cacheKey] = result;
     liveStatsCache.timestamp = now;
     
-    return liveStatsCache.data;
+    return result;
   } catch (error) {
     console.error('讀取即時統計失敗:', error.message);
-    return { total_tokens: 0, models: {} };
+    return { total_tokens: 0, models: {}, by_type: {} };
   }
 }
 
@@ -707,10 +739,11 @@ app.get('/api/quota-status', async (req, res) => {
   }
 });
 
-// API: 即時統計（直接讀 sessions，帶快取）
+// API: 即時統計（直接讀 sessions，帶快取，支援過濾）
 app.get('/api/live-stats', async (req, res) => {
   try {
-    const stats = await getLiveStats();
+    const { filter = 'all' } = req.query; // all, dm, group
+    const stats = await getLiveStats(filter);
     res.json(stats);
   } catch (error) {
     console.error('獲取即時統計失敗:', error);
