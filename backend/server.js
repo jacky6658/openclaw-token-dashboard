@@ -720,17 +720,23 @@ app.post('/api/switch-model', async (req, res) => {
     
     // 發送 Telegram 通知給用戶
     try {
-      const notificationMsg = `✅ 模型已切換\n\n舊模型：${oldModel}\n新模型：${model}\n\n下一條對話將使用新模型。`;
+      const notificationMsg = `✅ 模型已切換\n\n舊模型：\`${oldModel}\`\n新模型：\`${model}\`\n\n下一條對話將使用新模型。`;
       
-      // 寫入臨時文件避免 shell 轉義問題
-      const tmpFile = '/tmp/model-switch-notification.txt';
-      fs.writeFileSync(tmpFile, notificationMsg, 'utf8');
+      // 使用 spawn 而不是 exec，避免 shell 轉義問題
+      const { spawn } = require('child_process');
+      const proc = spawn('openclaw', ['message', 'send', '--channel', 'telegram', '--to', '8365775688', '--message', notificationMsg]);
       
-      await execAsync(`openclaw message send --channel telegram --to 8365775688 --message "$(cat ${tmpFile})" 2>&1`);
-      console.log('✅ 已發送 Telegram 通知');
+      proc.on('close', (code) => {
+        if (code === 0) {
+          console.log('✅ 已發送 Telegram 通知');
+        } else {
+          console.warn(`發送通知失敗，退出碼：${code}`);
+        }
+      });
       
-      // 清理臨時文件
-      fs.unlinkSync(tmpFile);
+      proc.stderr.on('data', (data) => {
+        console.warn('發送通知錯誤:', data.toString());
+      });
     } catch (e) {
       console.warn('發送通知失敗（不影響切換）:', e.message);
     }
