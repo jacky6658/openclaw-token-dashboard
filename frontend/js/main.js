@@ -660,9 +660,19 @@ async function switchModel(modelName) {
     const result = await response.json();
     
     if (response.ok) {
-      showToast('success', '切換成功', `已切換到 ${modelName}`);
+      showToast('success', '✅ 切換成功', `已切換到 ${modelName}，下一條對話將使用新模型`);
       closeModelSwitcher();
-      updateControlPanel();
+      
+      // 強制刷新配置（清除快取）
+      await fetch(`${API_BASE}/config?refresh=true`).then(r => r.json());
+      
+      // 立即更新控制面板
+      await updateControlPanel();
+      
+      // 如果在總覽頁面，也刷新
+      if (currentPage === 'overview') {
+        await renderOverview(currentFilter);
+      }
     } else {
       throw new Error(result.error || '切換失敗');
     }

@@ -636,9 +636,16 @@ app.get('/api/cost', (req, res) => {
   db.close();
 });
 
-// API: 獲取當前配置（優化版 - 避免卡住）
+// API: 獲取當前配置（優化版 - 避免卡住，強制刷新選項）
 app.get('/api/config', async (req, res) => {
   try {
+    const { refresh } = req.query;
+    
+    // 如果要求強制刷新，清除快取
+    if (refresh === 'true') {
+      openclawCache.timestamp = 0;
+    }
+    
     // 從快取獲取數據
     const openclawData = await getOpenclawData();
     
@@ -696,22 +703,20 @@ app.post('/api/switch-model', async (req, res) => {
     if (!config.agents.defaults) config.agents.defaults = {};
     if (!config.agents.defaults.model) config.agents.defaults.model = {};
     
+    const oldModel = config.agents.defaults.model.primary;
     config.agents.defaults.model.primary = model;
     
     // 寫回配置文件
     fs.writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8');
+    console.log(`✅ 模型已切換：${oldModel} → ${model}`);
     
-    // 重啟 Gateway（使用 gateway restart 指令）
-    try {
-      await execAsync('openclaw gateway restart');
-      await new Promise(resolve => setTimeout(resolve, 3000)); // 等待 Gateway 完全重啟
-      
-      // 清除快取，強制重新讀取配置
-      openclawCache.timestamp = 0;
-      await updateOpenclawCache();
-    } catch (e) {
-      console.warn('Gateway 重啟警告:', e.message);
-    }
+    // 不重啟 Gateway（讓 OpenClaw 自動偵測配置變更）
+    // 直接清除快取並重新載入
+    openclawCache.timestamp = 0;
+    liveStatsCache.timestamp = 0;
+    await updateOpenclawCache();
+    
+    console.log('✅ 配置已即時生效（無需重啟）');
     
     res.json({ 
       success: true, 
