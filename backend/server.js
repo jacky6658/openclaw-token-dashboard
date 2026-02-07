@@ -53,66 +53,74 @@ async function collectUsageData() {
   try {
     console.log('📊 開始收集使用數據...');
     
-    // 執行 openclaw sessions list 獲取所有 session 統計
-    const { stdout } = await execAsync('openclaw sessions list --messageLimit=10 --format=json 2>/dev/null || echo "[]"');
+    // 讀取 sessions.json
+    const sessionsPath = path.join(require('os').homedir(), '.openclaw/agents/main/sessions/sessions.json');
     
-    let sessions = [];
-    try {
-      sessions = JSON.parse(stdout);
-    } catch (e) {
-      console.warn('解析 sessions 失敗，嘗試備用方案');
-      // 備用：使用 openclaw status
-      const { stdout: statusOut } = await execAsync('openclaw status 2>/dev/null || echo ""');
-      const tokenMatch = statusOut.match(/(\d+)\s+in\s+\/\s+(\d+)\s+out/);
-      if (tokenMatch) {
-        const [, tokensIn, tokensOut] = tokenMatch;
-        sessions = [{
-          tokens: { in: parseInt(tokensIn), out: parseInt(tokensOut) }
-        }];
-      }
+    if (!fs.existsSync(sessionsPath)) {
+      console.warn('⚠️ sessions.json 不存在');
+      return;
     }
     
-    // 累積統計
-    let totalTokensIn = 0;
-    let totalTokensOut = 0;
-    let requestCount = 0;
+    const sessionsData = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
+    const sessions = sessionsData.sessions || [];
+    
+    // 累積統計 - 只統計最近 6 小時的更新
+    const sixHoursAgo = Date.now() - (6 * 60 * 60 * 1000);
+    let totalTokens = 0;
+    const modelUsage = {};
     
     sessions.forEach(session => {
-      if (session.tokens) {
-        totalTokensIn += session.tokens.in || 0;
-        totalTokensOut += session.tokens.out || 0;
+      if (!session.updatedAt || session.updatedAt < sixHoursAgo) return;
+      if (!session.totalTokens || session.totalTokens === 0) return;
+      
+      totalTokens += session.totalTokens;
+      
+      const model = session.model || 'unknown';
+      if (!modelUsage[model]) {
+        modelUsage[model] = { tokens: 0, sessions: 0 };
       }
-      if (session.messages && session.messages.length > 0) {
-        requestCount += Math.ceil(session.messages.length / 2); // 每兩條訊息算一個請求
-      }
+      modelUsage[model].tokens += session.totalTokens;
+      modelUsage[model].sessions += 1;
     });
     
-    if (totalTokensIn === 0 && totalTokensOut === 0) {
+    if (totalTokens === 0) {
       console.log('⚠️ 無新數據，跳過此次收集');
       return;
     }
     
-    // 寫入資料庫
+    // 寫入資料庫（按模型分組）
     const db = getDb();
-    const openclawData = await getOpenclawData();
-    const currentModel = openclawData.defaultModel;
-    const [provider, ...modelParts] = currentModel.split('/');
-    const model = modelParts.join('/');
-    
     const timestamp = new Date().toISOString();
+    let inserted = 0;
+    const modelCount = Object.keys(modelUsage).length;
     
-    db.run(`
-      INSERT INTO token_usage 
-      (provider, model, input_tokens, output_tokens, event_type, event_description, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [provider, model, totalTokensIn, totalTokensOut, 'auto_collect', `自動收集 (${requestCount} 請求)`, timestamp], (err) => {
-      if (err) {
-        console.error('寫入資料庫失敗:', err.message);
-      } else {
-        console.log(`✅ 數據已收集：${totalTokensIn} in / ${totalTokensOut} out (${requestCount} 請求)`);
-      }
+    for (const [modelName, stats] of Object.entries(modelUsage)) {
+      const [provider, ...modelParts] = modelName.split('/');
+      const model = modelParts.join('/') || modelName;
+      
+      // 簡單估算：假設 input:output = 1:2
+      const inputTokens = Math.floor(stats.tokens / 3);
+      const outputTokens = stats.tokens - inputTokens;
+      
+      db.run(`
+        INSERT INTO token_usage 
+        (provider, model, input_tokens, output_tokens, event_type, event_description, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [provider, model, inputTokens, outputTokens, 'auto_collect', `自動收集 (${stats.sessions} sessions)`, timestamp], (err) => {
+        if (err) {
+          console.error(`寫入 ${modelName} 數據失敗:`, err.message);
+        }
+        inserted++;
+        if (inserted === modelCount) {
+          console.log(`✅ 數據已收集：總計 ${totalTokens} tokens (${modelCount} 模型)`);
+          db.close();
+        }
+      });
+    }
+    
+    if (modelCount === 0) {
       db.close();
-    });
+    }
     
   } catch (error) {
     console.error('收集數據失敗:', error.message);
@@ -532,6 +540,16 @@ app.get('/api/quota-status', async (req, res) => {
 // 健康檢查
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// 手動觸發數據收集（測試用）
+app.post('/api/collect-now', async (req, res) => {
+  try {
+    await collectUsageData();
+    res.json({ success: true, message: '數據收集已完成' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // 初始化快取
