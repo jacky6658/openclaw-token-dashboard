@@ -732,11 +732,17 @@ app.post('/api/switch-model', async (req, res) => {
     // 發送 Telegram 通知給用戶（在 Gateway 重啟後）
     setTimeout(async () => {
       try {
-        const notificationMsg = `✅ 模型已切換\n\n舊模型: ${oldModel}\n新模型: ${model}\n\n下一條對話將使用新模型。`;
+        const notificationMsg = `✅ 模型已切換\n\n舊模型: ${oldModel}\n新模型: ${model}\n\n⚠️ 當前對話還在使用舊模型。\n如需立即使用新模型，請：\n• 輸入 /reset（會清空上下文）\n• 或開始新對話\n\n下次對話將自動使用新模型。`;
         
-        // 簡單的命令，避免轉義問題
-        await execAsync(`openclaw message send --channel telegram --to 8365775688 --message "${notificationMsg}" 2>&1`);
+        // 寫入臨時文件避免特殊字符問題
+        const tmpFile = '/tmp/model-switch-msg.txt';
+        fs.writeFileSync(tmpFile, notificationMsg, 'utf8');
+        
+        await execAsync(`cat ${tmpFile} | openclaw message send --channel telegram --to 8365775688 2>&1`);
         console.log('✅ 已發送 Telegram 通知');
+        
+        // 清理
+        fs.unlinkSync(tmpFile);
       } catch (e) {
         console.warn('發送通知失敗（不影響切換）:', e.message);
       }
