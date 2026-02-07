@@ -29,18 +29,66 @@ function getDb() {
   return new sqlite3.Database(DB_PATH);
 }
 
-// 獲取當前模型
-async function getCurrentModel() {
+// 執行 openclaw models 命令並解析輸出
+async function parseOpenclawModels() {
   try {
-    if (!fs.existsSync(OPENCLAW_CONFIG_PATH)) {
-      return 'unknown';
+    const { stdout } = await execAsync('openclaw models 2>/dev/null || echo ""');
+    const lines = stdout.split('\n').filter(l => l.trim());
+    
+    let defaultModel = 'unknown';
+    let models = {};
+    
+    // 查找 Default 行：「Default       : anthropic/claude-haiku-4-5」
+    const defaultLine = lines.find(l => l.includes('Default'));
+    if (defaultLine) {
+      const match = defaultLine.match(/:\s*([\w\-/\.]+)/);
+      if (match) defaultModel = match[1];
     }
-    const configContent = fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8');
-    const config = JSON.parse(configContent);
-    return config.agents?.defaults?.model?.primary || 'unknown';
-  } catch (e) {
-    console.warn('獲取當前模型失敗:', e.message);
-    return 'unknown';
+    
+    // 查找 OAuth/token status 區塊
+    let inOAuthSection = false;
+    let currentProvider = null;
+    
+    lines.forEach(line => {
+      if (line.includes('OAuth/token status')) {
+        inOAuthSection = true;
+        return;
+      }
+      
+      if (!inOAuthSection) return;
+      
+      // Provider 行：「- google-antigravity」
+      if (line.match(/^- ([\w\-]+)$/)) {
+        currentProvider = line.match(/^- ([\w\-]+)$/)[1];
+        if (!models[currentProvider]) {
+          models[currentProvider] = [];
+        }
+        return;
+      }
+      
+      // 模型行帶配額：「usage: Pro 100% left」
+      if (currentProvider && line.includes('usage:')) {
+        const quotaMatch = line.match(/(\d+)%/);
+        const quota = quotaMatch ? parseInt(quotaMatch[1]) : 100;
+        models[currentProvider].push({ quota, status: 'ok' });
+      }
+      
+      // 帳戶行：「  - profile_name ... ok expires in 55m」
+      if (currentProvider && line.match(/^\s+-\s+[\w:.-]+/)) {
+        const statusMatch = line.match(/ok|expired/);
+        if (statusMatch) {
+          models[currentProvider].push({ 
+            status: statusMatch[0],
+            details: line.trim()
+          });
+        }
+      }
+    });
+    
+    return { defaultModel, models, raw: stdout };
+  } catch (error) {
+    console.error('執行 openclaw models 失敗:', error.message);
+    return { defaultModel: 'unknown', models: {}, raw: '' };
   }
 }
 
@@ -93,48 +141,19 @@ app.get('/api/overview', (req, res) => {
   db.close();
 });
 
-// API: 模型配額狀態（從資料庫讀取 - 正確欄位名）
+// API: 模型配額狀態（從 openclaw models 命令讀取）
 app.get('/api/models', async (req, res) => {
   try {
-    const currentModel = await getCurrentModel();
-    const db = getDb();
+    const openclawData = await parseOpenclawModels();
     
-    // 從資料庫讀取最新的模型配額
-    db.all(`
-      SELECT 
-        provider,
-        model,
-        quota_remaining_pct as quota_left,
-        100 as quota_limit,
-        quota_reset_seconds as cooldown_seconds,
-        timestamp
-      FROM model_quota
-      WHERE timestamp >= datetime('now', '-10 minutes')
-      ORDER BY timestamp DESC
-    `, (err, rows) => {
-      if (err) {
-        console.error('查詢資料庫失敗:', err);
-        res.json({ models: [], current_model: currentModel });
-        db.close();
-        return;
-      }
-      
-      const models = rows.map(row => ({
-        provider: row.provider,
-        model: row.model,
-        full_name: `${row.provider}/${row.model}`,
-        quota_left: row.quota_left || 50,
-        quota_limit: row.quota_limit || 100,
-        cooldown_seconds: row.cooldown_seconds || 0,
-        status: (row.cooldown_seconds && row.cooldown_seconds > 0) ? 'cooldown' : 'ok'
-      }));
-      
-      res.json({ models, current_model: currentModel });
-      db.close();
+    res.json({
+      current_model: openclawData.defaultModel,
+      providers: openclawData.models,
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error('獲取模型列表失敗:', error);
-    res.status(500).json({ error: error.message, models: [], current_model: 'unknown' });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -276,22 +295,10 @@ app.get('/api/cost', (req, res) => {
 // API: 獲取當前配置（優化版 - 避免卡住）
 app.get('/api/config', async (req, res) => {
   try {
-    // 讀取 openclaw.json
-    let config = {};
-    let currentModel = 'unknown';
-    let quotaRemaining = 50; // 默認值
+    // 執行 openclaw models 獲取當前模型
+    const openclawData = await parseOpenclawModels();
     
-    if (fs.existsSync(OPENCLAW_CONFIG_PATH)) {
-      try {
-        const configContent = fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8');
-        config = JSON.parse(configContent);
-        currentModel = config.agents?.defaults?.model?.primary || 'unknown';
-      } catch (e) {
-        console.error('讀取配置文件失敗:', e.message);
-      }
-    }
-    
-    // 檢查 Gateway 狀態（快速方法）
+    // 檢查 Gateway 狀態
     let gatewayRunning = false;
     try {
       const { stdout } = await execAsync('pgrep -f "openclaw-gateway" | head -1', { timeout: 1000 });
@@ -305,13 +312,16 @@ app.get('/api/config', async (req, res) => {
     if (!gatewayRunning) {
       warnings.push('Gateway 未運行');
     }
+    if (openclawData.defaultModel === 'unknown') {
+      warnings.push('無法讀取當前模型');
+    }
     
     res.json({
-      current_model: currentModel,
+      current_model: openclawData.defaultModel,
       gateway_running: gatewayRunning,
-      quota_remaining: quotaRemaining,
+      providers: Object.keys(openclawData.models),
       warnings: warnings,
-      config: {}  // 不返回完整配置，減少數據量
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     console.error('獲取配置失敗:', error);
