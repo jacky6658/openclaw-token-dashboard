@@ -721,8 +721,16 @@ app.post('/api/switch-model', async (req, res) => {
     // 發送 Telegram 通知給用戶
     try {
       const notificationMsg = `✅ 模型已切換\n\n舊模型：${oldModel}\n新模型：${model}\n\n下一條對話將使用新模型。`;
-      await execAsync(`openclaw message send --to telegram:8365775688 --text "${notificationMsg.replace(/"/g, '\\"')}" 2>&1`);
+      
+      // 寫入臨時文件避免 shell 轉義問題
+      const tmpFile = '/tmp/model-switch-notification.txt';
+      fs.writeFileSync(tmpFile, notificationMsg, 'utf8');
+      
+      await execAsync(`openclaw message send --channel telegram --to 8365775688 --message "$(cat ${tmpFile})" 2>&1`);
       console.log('✅ 已發送 Telegram 通知');
+      
+      // 清理臨時文件
+      fs.unlinkSync(tmpFile);
     } catch (e) {
       console.warn('發送通知失敗（不影響切換）:', e.message);
     }
