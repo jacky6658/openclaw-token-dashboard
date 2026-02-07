@@ -48,6 +48,77 @@ async function getOpenclawData() {
   return openclawCache.data || { defaultModel: 'unknown', models: {} };
 }
 
+// 數據收集器：每 5 分鐘收集一次使用統計（不消耗 LLM token）
+async function collectUsageData() {
+  try {
+    console.log('📊 開始收集使用數據...');
+    
+    // 執行 openclaw sessions list 獲取所有 session 統計
+    const { stdout } = await execAsync('openclaw sessions list --messageLimit=10 --format=json 2>/dev/null || echo "[]"');
+    
+    let sessions = [];
+    try {
+      sessions = JSON.parse(stdout);
+    } catch (e) {
+      console.warn('解析 sessions 失敗，嘗試備用方案');
+      // 備用：使用 openclaw status
+      const { stdout: statusOut } = await execAsync('openclaw status 2>/dev/null || echo ""');
+      const tokenMatch = statusOut.match(/(\d+)\s+in\s+\/\s+(\d+)\s+out/);
+      if (tokenMatch) {
+        const [, tokensIn, tokensOut] = tokenMatch;
+        sessions = [{
+          tokens: { in: parseInt(tokensIn), out: parseInt(tokensOut) }
+        }];
+      }
+    }
+    
+    // 累積統計
+    let totalTokensIn = 0;
+    let totalTokensOut = 0;
+    let requestCount = 0;
+    
+    sessions.forEach(session => {
+      if (session.tokens) {
+        totalTokensIn += session.tokens.in || 0;
+        totalTokensOut += session.tokens.out || 0;
+      }
+      if (session.messages && session.messages.length > 0) {
+        requestCount += Math.ceil(session.messages.length / 2); // 每兩條訊息算一個請求
+      }
+    });
+    
+    if (totalTokensIn === 0 && totalTokensOut === 0) {
+      console.log('⚠️ 無新數據，跳過此次收集');
+      return;
+    }
+    
+    // 寫入資料庫
+    const db = getDb();
+    const openclawData = await getOpenclawData();
+    const currentModel = openclawData.defaultModel;
+    const [provider, ...modelParts] = currentModel.split('/');
+    const model = modelParts.join('/');
+    
+    const timestamp = new Date().toISOString();
+    
+    db.run(`
+      INSERT INTO token_usage 
+      (provider, model, input_tokens, output_tokens, event_type, event_description, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [provider, model, totalTokensIn, totalTokensOut, 'auto_collect', `自動收集 (${requestCount} 請求)`, timestamp], (err) => {
+      if (err) {
+        console.error('寫入資料庫失敗:', err.message);
+      } else {
+        console.log(`✅ 數據已收集：${totalTokensIn} in / ${totalTokensOut} out (${requestCount} 請求)`);
+      }
+      db.close();
+    });
+    
+  } catch (error) {
+    console.error('收集數據失敗:', error.message);
+  }
+}
+
 // 中間件
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../frontend')));
@@ -473,6 +544,18 @@ async function initializeCache() {
   console.log(`✅ 已設置快取自動更新（每 ${openclawCache.ttl / 1000} 秒）`);
 }
 
+// 初始化數據收集器
+async function initializeDataCollector() {
+  console.log('⏳ 初始化數據收集器...');
+  
+  // 立即執行一次
+  await collectUsageData();
+  
+  // 每 5 分鐘收集一次（300000 毫秒）
+  setInterval(collectUsageData, 300000);
+  console.log('✅ 已設置數據收集器（每 5 分鐘）');
+}
+
 // 啟動伺服器
 app.listen(PORT, async () => {
   console.log(`🚀 Token Dashboard running at http://localhost:${PORT}`);
@@ -488,6 +571,9 @@ app.listen(PORT, async () => {
   
   // 初始化快取
   await initializeCache();
+  
+  // 初始化數據收集器
+  await initializeDataCollector();
 });
 
 module.exports = app;
