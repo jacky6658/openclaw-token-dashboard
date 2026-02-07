@@ -155,12 +155,32 @@ async function parseOpenclawModels() {
     
     let defaultModel = 'unknown';
     let models = {};
+    let configuredModels = [];
+    let fallbackModels = [];
     
     // 查找 Default 行：「Default       : anthropic/claude-haiku-4-5」
     const defaultLine = lines.find(l => l.includes('Default'));
     if (defaultLine) {
       const match = defaultLine.match(/:\s*([\w\-/\.]+)/);
       if (match) defaultModel = match[1];
+    }
+    
+    // 解析 Configured models
+    const configuredLine = lines.find(l => l.startsWith('Configured models'));
+    if (configuredLine) {
+      const modelsStr = configuredLine.split(':')[1];
+      if (modelsStr) {
+        configuredModels = modelsStr.split(',').map(m => m.trim()).filter(m => m);
+      }
+    }
+    
+    // 解析 Fallbacks
+    const fallbacksLine = lines.find(l => l.startsWith('Fallbacks'));
+    if (fallbacksLine) {
+      const modelsStr = fallbacksLine.match(/:\s*(.+)$/);
+      if (modelsStr && modelsStr[1]) {
+        fallbackModels = modelsStr[1].split(',').map(m => m.trim()).filter(m => m);
+      }
     }
     
     // 查找 OAuth/token status 區塊
@@ -235,7 +255,7 @@ async function parseOpenclawModels() {
       }
     });
     
-    return { defaultModel, models, raw: stdout };
+    return { defaultModel, models, configuredModels, fallbackModels, raw: stdout };
   } catch (error) {
     console.error('執行 openclaw models 失敗:', error.message);
     return { defaultModel: 'unknown', models: {}, raw: '' };
@@ -296,9 +316,34 @@ app.get('/api/models', async (req, res) => {
   try {
     const openclawData = await getOpenclawData();
     
+    // 整合 configured + fallback 模型，生成完整的可切換模型列表
+    const allAvailableModels = [
+      ...(openclawData.configuredModels || []),
+      ...(openclawData.fallbackModels || [])
+    ];
+    
+    // 構建模型列表（帶狀態）
+    const models = allAvailableModels.map(fullName => {
+      const [provider, ...modelParts] = fullName.split('/');
+      const modelName = modelParts.join('/');
+      const isCurrent = fullName === openclawData.defaultModel;
+      const isConfigured = (openclawData.configuredModels || []).includes(fullName);
+      
+      return {
+        full_name: fullName,
+        provider,
+        model: modelName,
+        is_current: isCurrent,
+        is_configured: isConfigured,
+        is_fallback: !isConfigured,
+        status: 'available'
+      };
+    });
+    
     res.json({
       current_model: openclawData.defaultModel,
-      providers: openclawData.models,
+      models,
+      providers: openclawData.models, // 保留 OAuth/token status
       cache_age: openclawCache.timestamp ? Date.now() - openclawCache.timestamp : null,
       timestamp: new Date().toISOString()
     });

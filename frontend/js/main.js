@@ -486,33 +486,22 @@ async function openModelSwitcher() {
     
     const currentModel = config.current_model;
     
-    // 將 providers 物件展平成陣列
-    const allModels = [];
-    Object.entries(modelsData.providers || {}).forEach(([provider, items]) => {
-      if (Array.isArray(items)) {
-        items.forEach(item => {
-          allModels.push({
-            provider,
-            full_name: item.full_name || `${provider}/${item.profile}`,
-            model: item.profile || item.model || 'unknown',
-            quota: item.quota || 0,
-            quota_left: item.quota || 0,
-            status: item.status || 'unknown',
-            cooldown_seconds: item.status === 'cooldown' ? 300 : 0
-          });
-        });
-      }
-    });
+    // 使用後端返回的實際可切換模型列表
+    const allModels = modelsData.models || [];
+    
+    if (allModels.length === 0) {
+      modalBody.innerHTML = '<div class="error">無可用模型</div>';
+      return;
+    }
     
     // 生成模型卡片
     let html = '<div class="model-grid">';
     
     for (const model of allModels) {
-      const isCurrent = model.full_name === currentModel;
-      const isCooldown = model.cooldown_seconds > 0;
-      const quotaLeft = model.quota_left || 0;
+      const isCurrent = model.is_current || model.full_name === currentModel;
+      const isConfigured = model.is_configured;
       
-      const cardClass = isCurrent ? 'model-card current' : isCooldown ? 'model-card cooldown' : 'model-card available';
+      const cardClass = isCurrent ? 'model-card current' : 'model-card available';
       
       html += `
         <div class="${cardClass}">
@@ -524,8 +513,8 @@ async function openModelSwitcher() {
           
           <div class="model-stats">
             <div class="model-stat">
-              <span>配額</span>
-              <strong class="${quotaLeft >= 70 ? 'text-success' : quotaLeft >= 30 ? 'text-warning' : 'text-danger'}">${quotaLeft}%</strong>
+              <span>類型</span>
+              <strong style="color: ${isConfigured ? '#00ff88' : '#888'};">${isConfigured ? 'Configured' : 'Fallback'}</strong>
             </div>
             <div class="model-stat">
               <span>Provider</span>
@@ -533,25 +522,10 @@ async function openModelSwitcher() {
             </div>
           </div>
           
-          ${isCooldown ? `
-            <div class="cooldown-display" style="margin: 15px 0;">
-              <div class="countdown-circle">
-                <svg viewBox="0 0 36 36" class="circular-chart">
-                  <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#e9ecef" stroke-width="3"/>
-                  <path class="circle" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#ffc107" stroke-width="3" stroke-dasharray="0, 100"/>
-                </svg>
-                <div class="countdown-text">${formatCooldown(model.cooldown_seconds)}</div>
-              </div>
-              <div class="countdown-label">
-                <small>Cooldown 剩餘時間</small>
-              </div>
-            </div>
-          ` : ''}
-          
           <button class="btn-select" 
                   onclick="switchModel('${model.full_name}')"
-                  ${isCurrent || isCooldown ? 'disabled' : ''}>
-            ${isCurrent ? '當前使用中' : isCooldown ? 'Cooldown 中' : '切換到此模型'}
+                  ${isCurrent ? 'disabled' : ''}>
+            ${isCurrent ? '當前使用中' : '切換到此模型'}
           </button>
         </div>
       `;
@@ -559,15 +533,15 @@ async function openModelSwitcher() {
     
     html += '</div>';
     
-    // 智能推薦
-    const recommended = allModels.find(m => m.quota_left > 70 && m.cooldown_seconds === 0 && m.full_name !== currentModel);
+    // 智能推薦（推薦 configured 且非當前的模型）
+    const recommended = allModels.find(m => m.is_configured && !m.is_current);
     if (recommended) {
       html += `
         <div class="recommendation">
           <i data-lucide="lightbulb" class="recommendation-icon"></i>
           <div style="flex: 1;">
             <strong>智能推薦</strong>
-            <p>${recommended.model} 目前配額充足（${recommended.quota_left}%），建議優先使用</p>
+            <p>${recommended.full_name} 已配置可用，建議優先使用</p>
           </div>
           <button class="btn-primary-sm" onclick="switchModel('${recommended.full_name}')">立即切換</button>
         </div>
