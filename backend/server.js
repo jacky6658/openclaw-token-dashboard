@@ -114,8 +114,23 @@ async function parseOpenclawModels() {
         });
       }
       
-      // 帳戶行：「  - profile_name ... ok expires in 55m」
-      if (currentProvider && line.match(/^\s+-\s+([\w:.-]+)/)) {
+      // Static profile 行：「  - anthropic:default static」
+      if (currentProvider && line.match(/^\s+-\s+([\w:.-]+)\s+static/i)) {
+        const profileMatch = line.match(/^\s+-\s+([\w:.-]+)\s+static/i);
+        if (profileMatch) {
+          const [, profile] = profileMatch;
+          models[currentProvider].push({
+            profile,
+            status: 'ok',
+            authType: 'static',
+            full_name: `${currentProvider}/${profile}`
+          });
+        }
+        return;
+      }
+      
+      // OAuth 帳戶行：「  - profile_name (email@example.com) ok expires in 55m」
+      if (currentProvider && line.match(/^\s+-\s+([\w:.-]+)\s+\(.*?\)\s+(ok|expired)/)) {
         const profileMatch = line.match(/^\s+-\s+([\w:.-]+)\s+\((.*?)\)\s+(ok|expired)/);
         if (profileMatch) {
           const [, profile, email, status] = profileMatch;
@@ -123,6 +138,7 @@ async function parseOpenclawModels() {
             profile,
             email,
             status,
+            authType: 'oauth',
             full_name: `${currentProvider}/${profile}`
           });
         }
