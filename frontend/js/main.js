@@ -161,16 +161,37 @@ async function renderOverview(filter = 'all') {
     
     <div class="section">
       <h2><i data-lucide="message-circle" style="width: 24px; height: 24px; stroke: currentColor; vertical-align: middle; margin-right: 8px;"></i>Session 類型分佈</h2>
-      <div class="chart-container" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
-        ${['dm', 'group', 'other'].map(type => {
+      <div class="chart-container" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
+        ${['dm', 'group', 'cron', 'other'].map(type => {
           const tokens = live.by_type?.[type] || 0;
           const percentage = todayTokens > 0 ? ((tokens / todayTokens) * 100).toFixed(1) : 0;
-          const label = type === 'dm' ? '私聊' : type === 'group' ? '群組' : '其他';
-          const icon = type === 'dm' ? '💬' : type === 'group' ? '👥' : '📝';
+          let label, icon, desc;
+          switch(type) {
+            case 'dm':
+              label = '私聊';
+              icon = '💬';
+              desc = '你與我的對話';
+              break;
+            case 'group':
+              label = '群組';
+              icon = '👥';
+              desc = '群組討論';
+              break;
+            case 'cron':
+              label = 'Cron';
+              icon = '⏰';
+              desc = '自動排程任務';
+              break;
+            default:
+              label = '其他';
+              icon = '📝';
+              desc = 'Main/Isolated sessions';
+          }
           return `
             <div class="stat-card" style="text-align: center;">
-              <div style="font-size: 2rem; margin-bottom: 10px;">${icon}</div>
+              <div style="font-size: 2rem; margin-bottom: 10px;" title="${desc}">${icon}</div>
               <strong>${label}</strong>
+              <div style="font-size: 0.8rem; color: #888; margin-bottom: 10px;">${desc}</div>
               <div style="font-size: 1.2rem; margin: 10px 0;">${formatNumber(tokens)}</div>
               <div style="color: #888; font-size: 0.9rem;">${percentage}%</div>
             </div>

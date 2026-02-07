@@ -79,8 +79,8 @@ async function getLiveStats(filter = 'all') {
     const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
     let totalTokens = 0;
     const modelUsage = {};
-    const byType = { dm: 0, group: 0, other: 0 };
-    const byTypeModels = { dm: {}, group: {}, other: {} };
+    const byType = { dm: 0, group: 0, cron: 0, other: 0 };
+    const byTypeModels = { dm: {}, group: {}, cron: {}, other: {} };
     
     sessions.forEach(([key, session]) => {
       if (!session.updatedAt || session.updatedAt < oneDayAgo) return;
@@ -92,6 +92,8 @@ async function getLiveStats(filter = 'all') {
         sessionType = 'dm';
       } else if (key.includes(':group:')) {
         sessionType = 'group';
+      } else if (key.includes(':cron:')) {
+        sessionType = 'cron';
       }
       
       // 過濾（如果指定）
