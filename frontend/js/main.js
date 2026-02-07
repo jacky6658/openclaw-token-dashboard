@@ -518,7 +518,7 @@ async function openModelSwitcher() {
         <div class="${cardClass}">
           <div class="model-header">
             ${isCurrent ? '<i data-lucide="star" style="width: 20px; height: 20px; stroke: #ff0080; fill: #ff0080;"></i>' : ''}
-            <strong>${model.model}</strong>
+            <strong>${model.full_name}</strong>
             ${isCurrent ? '<span class="status-badge status-ok" style="margin-left: auto; font-size: 0.7rem;">當前</span>' : ''}
           </div>
           
