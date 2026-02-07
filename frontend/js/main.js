@@ -644,17 +644,18 @@ async function renderQuota() {
     `;
     
     models.forEach(m => {
+      // 只顯示有配額信息的模型，跳過 OAuth/static 帳戶
+      if (m.authType && m.quota === undefined) return;
+      
       const statusEmoji = m.status === 'ok' ? '✅' : '⏳';
       const modelName = m.full_name || m.profile || m.model || 'unknown';
       
-      // Static profiles（API key）沒有配額限制
+      // Static profiles（API key）或無配額數據的顯示 N/A
       let quota;
-      if (m.authType === 'static') {
-        quota = '<span style="color: #888">N/A</span>';
-      } else if (m.quota !== undefined) {
+      if (m.quota !== undefined) {
         quota = `${m.quota}%`;
       } else {
-        quota = '<span style="color: #888">未知</span>';
+        quota = '<span style="color: #888">N/A</span>';
       }
       
       const statusText = m.status === 'ok' ? '可用' : m.status === 'expired' ? '已過期' : 'Cooldown';
