@@ -85,19 +85,26 @@ async function loadPage(page, showLoading = true) {
 
 // 渲染總覽頁
 async function renderOverview() {
-  const [today, week, month] = await Promise.all([
+  // 並行獲取：即時統計 + DB 統計
+  const [live, today, week, month] = await Promise.all([
+    fetch(`${API_BASE}/live-stats`).then(r => r.json()),
     fetch(`${API_BASE}/overview?period=today`).then(r => r.json()),
     fetch(`${API_BASE}/overview?period=week`).then(r => r.json()),
     fetch(`${API_BASE}/overview?period=month`).then(r => r.json())
   ]);
   
   const content = document.getElementById('content');
+  
+  // 使用即時統計（live）代替 DB 統計，更快更準確
+  const todayTokens = live.total_tokens || today.total_tokens;
+  const estimatedCost = (todayTokens / 1000000 * 3).toFixed(2); // 粗估
+  
   content.innerHTML = `
     <div class="stats-grid">
       <div class="stat-card">
-        <h3>今日消耗</h3>
-        <div class="value">${formatNumber(today.total_tokens)}</div>
-        <div class="label">tokens ($${today.estimated_cost.toFixed(2)})</div>
+        <h3>今日消耗 <span style="color: #00ff88; font-size: 0.7rem;">●即時</span></h3>
+        <div class="value">${formatNumber(todayTokens)}</div>
+        <div class="label">tokens (~$${estimatedCost})</div>
       </div>
       <div class="stat-card">
         <h3>本週消耗</h3>
@@ -110,9 +117,9 @@ async function renderOverview() {
         <div class="label">tokens ($${month.estimated_cost.toFixed(2)})</div>
       </div>
       <div class="stat-card">
-        <h3>今日請求數</h3>
-        <div class="value">${today.total_requests}</div>
-        <div class="label">次</div>
+        <h3>活躍 Sessions</h3>
+        <div class="value">${live.sessions_count || 0}</div>
+        <div class="label">個</div>
       </div>
     </div>
     
@@ -139,9 +146,25 @@ async function renderOverview() {
     </div>
     
     <div class="section">
-      <h2><i data-lucide="cpu" style="width: 24px; height: 24px; stroke: currentColor; vertical-align: middle; margin-right: 8px;"></i>使用的模型</h2>
+      <h2><i data-lucide="cpu" style="width: 24px; height: 24px; stroke: currentColor; vertical-align: middle; margin-right: 8px;"></i>模型使用分佈 <span style="color: #00ff88; font-size: 0.8rem;">●即時</span></h2>
       <div class="chart-container">
-        ${today.models_used.map(model => `<span class="status-badge status-ok">${model}</span>`).join(' ')}
+        ${Object.keys(live.models || {}).length > 0 
+          ? Object.entries(live.models).map(([model, tokens]) => {
+              const percentage = ((tokens / todayTokens) * 100).toFixed(1);
+              return `
+                <div style="margin-bottom: 10px;">
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <span class="status-badge status-ok">${model}</span>
+                    <span>${formatNumber(tokens)} tokens (${percentage}%)</span>
+                  </div>
+                  <div class="progress-bar">
+                    <div class="progress-fill" style="width: ${percentage}%;"></div>
+                  </div>
+                </div>
+              `;
+            }).join('')
+          : '<span style="color: #888;">暫無數據</span>'
+        }
       </div>
     </div>
   `;

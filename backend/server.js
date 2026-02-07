@@ -27,6 +27,13 @@ let openclawCache = {
   ttl: 30000 // 30 秒快取
 };
 
+// 即時統計快取
+let liveStatsCache = {
+  data: null,
+  timestamp: null,
+  ttl: 30000 // 30 秒快取
+};
+
 // 更新快取
 async function updateOpenclawCache() {
   try {
@@ -46,6 +53,54 @@ async function getOpenclawData() {
     await updateOpenclawCache();
   }
   return openclawCache.data || { defaultModel: 'unknown', models: {} };
+}
+
+// 獲取即時統計（帶快取）
+async function getLiveStats() {
+  const now = Date.now();
+  
+  // 檢查快取
+  if (liveStatsCache.data && (now - liveStatsCache.timestamp) < liveStatsCache.ttl) {
+    return liveStatsCache.data;
+  }
+  
+  try {
+    const sessionsPath = path.join(require('os').homedir(), '.openclaw/agents/main/sessions/sessions.json');
+    
+    if (!fs.existsSync(sessionsPath)) {
+      return { total_tokens: 0, models: {} };
+    }
+    
+    const sessionsData = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
+    const sessions = Object.values(sessionsData);
+    
+    // 統計今日用量（過去 24 小時）
+    const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+    let totalTokens = 0;
+    const modelUsage = {};
+    
+    sessions.forEach(session => {
+      if (!session.updatedAt || session.updatedAt < oneDayAgo) return;
+      if (!session.totalTokens || session.totalTokens === 0) return;
+      
+      totalTokens += session.totalTokens;
+      
+      const model = session.model || 'unknown';
+      if (!modelUsage[model]) {
+        modelUsage[model] = 0;
+      }
+      modelUsage[model] += session.totalTokens;
+    });
+    
+    // 更新快取
+    liveStatsCache.data = { total_tokens: totalTokens, models: modelUsage, sessions_count: sessions.length };
+    liveStatsCache.timestamp = now;
+    
+    return liveStatsCache.data;
+  } catch (error) {
+    console.error('讀取即時統計失敗:', error.message);
+    return { total_tokens: 0, models: {} };
+  }
 }
 
 // 數據收集器：每 5 分鐘收集一次使用統計（不消耗 LLM token）
@@ -652,6 +707,17 @@ app.get('/api/quota-status', async (req, res) => {
   }
 });
 
+// API: 即時統計（直接讀 sessions，帶快取）
+app.get('/api/live-stats', async (req, res) => {
+  try {
+    const stats = await getLiveStats();
+    res.json(stats);
+  } catch (error) {
+    console.error('獲取即時統計失敗:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // API: 模型用量分析
 app.get('/api/model-analytics', (req, res) => {
   const db = getDb();
@@ -745,9 +811,9 @@ async function initializeDataCollector() {
   // 立即執行一次
   await collectUsageData();
   
-  // 每 5 分鐘收集一次（300000 毫秒）
-  setInterval(collectUsageData, 300000);
-  console.log('✅ 已設置數據收集器（每 5 分鐘）');
+  // 每 1 分鐘收集一次（60000 毫秒）
+  setInterval(collectUsageData, 60000);
+  console.log('✅ 已設置數據收集器（每 1 分鐘）');
 }
 
 // 啟動伺服器
