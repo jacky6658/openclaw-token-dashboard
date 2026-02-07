@@ -672,7 +672,17 @@ async function renderQuota() {
     models.forEach(m => {
       const statusEmoji = m.status === 'ok' ? '✅' : '⏳';
       const modelName = m.full_name || m.profile || m.model || 'unknown';
-      const quota = m.quota ? `${m.quota}%` : '未知';
+      
+      // Static profiles（API key）沒有配額限制
+      let quota;
+      if (m.authType === 'static') {
+        quota = '<span style="color: #888">N/A</span>';
+      } else if (m.quota !== undefined) {
+        quota = `${m.quota}%`;
+      } else {
+        quota = '<span style="color: #888">未知</span>';
+      }
+      
       const statusText = m.status === 'ok' ? '可用' : m.status === 'expired' ? '已過期' : 'Cooldown';
       
       html += `
