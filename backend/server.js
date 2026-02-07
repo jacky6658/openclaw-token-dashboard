@@ -62,16 +62,25 @@ async function collectUsageData() {
     }
     
     const sessionsData = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
-    const sessions = sessionsData.sessions || [];
+    const sessions = Object.values(sessionsData);
+    
+    console.log(`📋 找到 ${sessions.length} 個 sessions`);
     
     // 累積統計 - 只統計最近 6 小時的更新
     const sixHoursAgo = Date.now() - (6 * 60 * 60 * 1000);
     let totalTokens = 0;
     const modelUsage = {};
+    let skipped = { tooOld: 0, noTokens: 0 };
     
     sessions.forEach(session => {
-      if (!session.updatedAt || session.updatedAt < sixHoursAgo) return;
-      if (!session.totalTokens || session.totalTokens === 0) return;
+      if (!session.updatedAt || session.updatedAt < sixHoursAgo) {
+        skipped.tooOld++;
+        return;
+      }
+      if (!session.totalTokens || session.totalTokens === 0) {
+        skipped.noTokens++;
+        return;
+      }
       
       totalTokens += session.totalTokens;
       
@@ -82,6 +91,8 @@ async function collectUsageData() {
       modelUsage[model].tokens += session.totalTokens;
       modelUsage[model].sessions += 1;
     });
+    
+    console.log(`⏭️  跳過：${skipped.tooOld} 個過舊，${skipped.noTokens} 個無 token`);
     
     if (totalTokens === 0) {
       console.log('⚠️ 無新數據，跳過此次收集');
