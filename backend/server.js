@@ -392,20 +392,24 @@ app.post('/api/switch-model', async (req, res) => {
     const configContent = fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8');
     const config = JSON.parse(configContent);
     
-    // 更新 primary 模型
-    if (!config.llm) config.llm = {};
-    if (!config.llm.defaultProfile) config.llm.defaultProfile = {};
+    // 更新 primary 模型（正確路徑）
+    if (!config.agents) config.agents = {};
+    if (!config.agents.defaults) config.agents.defaults = {};
+    if (!config.agents.defaults.model) config.agents.defaults.model = {};
     
-    config.llm.defaultProfile.primary = model;
+    config.agents.defaults.model.primary = model;
     
     // 寫回配置文件
     fs.writeFileSync(OPENCLAW_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8');
     
-    // 重啟 Gateway
+    // 重啟 Gateway（使用 gateway restart 指令）
     try {
-      await execAsync('openclaw gateway stop');
-      await new Promise(resolve => setTimeout(resolve, 1000)); // 等待 1 秒
-      await execAsync('openclaw gateway start');
+      await execAsync('openclaw gateway restart');
+      await new Promise(resolve => setTimeout(resolve, 3000)); // 等待 Gateway 完全重啟
+      
+      // 清除快取，強制重新讀取配置
+      openclawCache.timestamp = 0;
+      await updateOpenclawCache();
     } catch (e) {
       console.warn('Gateway 重啟警告:', e.message);
     }
