@@ -29,6 +29,21 @@ function getDb() {
   return new sqlite3.Database(DB_PATH);
 }
 
+// 獲取當前模型
+async function getCurrentModel() {
+  try {
+    if (!fs.existsSync(OPENCLAW_CONFIG_PATH)) {
+      return 'unknown';
+    }
+    const configContent = fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8');
+    const config = JSON.parse(configContent);
+    return config.agents?.defaults?.model?.primary || 'unknown';
+  } catch (e) {
+    console.warn('獲取當前模型失敗:', e.message);
+    return 'unknown';
+  }
+}
+
 // API: 總覽統計
 app.get('/api/overview', (req, res) => {
   const db = getDb();
@@ -81,6 +96,7 @@ app.get('/api/overview', (req, res) => {
 // API: 模型配額狀態（從資料庫讀取 - 正確欄位名）
 app.get('/api/models', async (req, res) => {
   try {
+    const currentModel = await getCurrentModel();
     const db = getDb();
     
     // 從資料庫讀取最新的模型配額
@@ -98,7 +114,7 @@ app.get('/api/models', async (req, res) => {
     `, (err, rows) => {
       if (err) {
         console.error('查詢資料庫失敗:', err);
-        res.json({ models: [] });
+        res.json({ models: [], current_model: currentModel });
         db.close();
         return;
       }
@@ -113,12 +129,12 @@ app.get('/api/models', async (req, res) => {
         status: (row.cooldown_seconds && row.cooldown_seconds > 0) ? 'cooldown' : 'ok'
       }));
       
-      res.json({ models });
+      res.json({ models, current_model: currentModel });
       db.close();
     });
   } catch (error) {
     console.error('獲取模型列表失敗:', error);
-    res.status(500).json({ error: error.message, models: [] });
+    res.status(500).json({ error: error.message, models: [], current_model: 'unknown' });
   }
 });
 
@@ -269,7 +285,7 @@ app.get('/api/config', async (req, res) => {
       try {
         const configContent = fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8');
         config = JSON.parse(configContent);
-        currentModel = config.llm?.defaultProfile?.primary || 'unknown';
+        currentModel = config.agents?.defaults?.model?.primary || 'unknown';
       } catch (e) {
         console.error('讀取配置文件失敗:', e.message);
       }
